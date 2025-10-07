@@ -7,18 +7,14 @@ from werkzeug.utils import secure_filename
 from fpdf import FPDF
 from PIL import Image
 import qrcode
-import gerar_pdf_qr
 
 # Configurações iniciais
 app = Flask(__name__)
-# O Render usa a porta 10000. No entanto, o Gunicorn lida com isso.
-# A URL base será o domínio do Render.
+# A URL base usada para rastreamento (o Render a define)
 BASE_URL = 'https://pdf-rastreavel-app.onrender.com' 
 
-# Configurar a URL de rastreamento no módulo gerador
-# Importamos o módulo inteiro para poder acessar a variável global BASE_URL_RASTREAMENTO
-gerar_pdf_qr.BASE_URL_RASTREAMENTO = BASE_URL
-
+# Variável de URL de Rastreamento (A SER USADA NO QR CODE)
+BASE_URL_RASTREAMENTO = BASE_URL
 
 # Função auxiliar para configurar o PDF e a célula do texto
 def set_pdf_style(pdf):
@@ -110,6 +106,7 @@ def upload_file():
             # Para arquivos Excel
             df = pd.read_excel(file_stream)
         except Exception as e:
+            # Retorna o erro no AJAX do frontend
             return f'Erro ao ler arquivo Excel: {e}', 500
     elif filename.endswith('.csv'):
         try:
@@ -143,14 +140,17 @@ def upload_file():
                 
                 # 1. Cria a URL de rastreamento para o QR Code
                 # Usamos url_for para criar um link dinâmico, simulando o endpoint de rastreamento
-                rastreamento_url = f"{BASE_URL}{url_for('rastreamento', unique_id=unique_id)}"
+                # Usando a variável BASE_URL_RASTREAMENTO global
+                rastreamento_url = f"{BASE_URL_RASTREAMENTO}{url_for('rastreamento', unique_id=unique_id)}"
                 
                 # 2. Gera o PDF em um buffer de memória
                 pdf = FPDF('P', 'mm', 'A4')
                 pdf.set_auto_page_break(auto=True, margin=15)
                 
-                gerar_pdf_qr.gerar_pdf_com_qr(pdf, row.to_dict(), unique_id, rastreamento_url)
+                # CHAMA A FUNÇÃO LOCALMENTE DEFINIDA
+                gerar_pdf_com_qr(pdf, row.to_dict(), unique_id, rastreamento_url)
                 
+                # O FPDF precisa que a saída seja codificada para ser escrita no buffer
                 pdf_output = pdf.output(dest='S').encode('latin-1')
                 
                 # 3. Adiciona o PDF ao ZIP
@@ -169,7 +169,7 @@ def upload_file():
 
     except Exception as e:
         # Erro genérico de processamento
-        return f'Erro de processamento no servidor: {e}', 500
+        return f'Erro de processamento no servidor (Backend): {e}', 500
 
 # Rota de rastreamento (simulada)
 @app.route('/rastreamento/<unique_id>')
@@ -179,40 +179,10 @@ def rastreamento(unique_id):
     return render_template(
         'rastreamento.html', 
         unique_id=unique_id, 
-        base_url=BASE_URL
+        base_url=BASE_URL_RASTREAMENTO
     )
 
 # Criação de um template HTML simples para a página de rastreamento
 @app.route('/rastreamento.html')
 def rastreamento_html():
-    return '''
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Status do Documento</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="min-h-screen flex items-center justify-center p-4 bg-gray-50">
-    <div class="max-w-md w-full bg-white p-8 rounded-xl shadow-xl text-center">
-        <h1 class="text-3xl font-bold text-green-600 mb-4">VERIFICAÇÃO DE DOCUMENTO</h1>
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-green-500 mx-auto mb-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        <p class="text-gray-700 text-lg mb-2">Documento Validado com Sucesso!</p>
-        <p class="text-gray-500 text-sm">O ID de rastreamento 
-            <span class="font-mono text-indigo-600">{{ unique_id }}</span> 
-            foi encontrado. Este é o documento original.</p>
-        <div class="mt-8">
-            <a href="/" class="bg-indigo-600 text-white py-2 px-4 rounded-lg hover:bg-indigo-700 transition duration-300 font-semibold">Voltar para o Upload</a>
-        </div>
-    </div>
-</body>
-</html>
-'''
-
-# Se você estiver rodando localmente (o Render ignora esta parte)
-if __name__ == '__main__':
-    # Usado apenas para fins de debug local, a porta Render é 10000
-    app.run(debug=True)
+    return render_template('rastreamento.html')
