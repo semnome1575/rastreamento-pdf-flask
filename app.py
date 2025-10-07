@@ -114,7 +114,6 @@ def upload_file():
             for delimiter in [',', ';']: # Tenta vírgula e ponto-e-vírgula
                 try:
                     file_stream.seek(0)
-                    # CORREÇÃO AQUI: adicionando o separador 'sep'
                     df = pd.read_csv(file_stream, encoding=encoding, sep=delimiter)
                     
                     # Se a leitura for bem sucedida e tiver pelo menos 2 colunas, consideramos OK
@@ -150,22 +149,29 @@ def upload_file():
         with zipfile.ZipFile(zip_buffer, 'a', zipfile.ZIP_DEFLATED, False) as zip_file:
             # Itera sobre cada linha da planilha
             for index, row in df.iterrows():
-                unique_id = str(row['ID_UNICO'])
+                try:
+                    unique_id = str(row['ID_UNICO'])
+                    
+                    # 1. Cria a URL de rastreamento para o QR Code
+                    rastreamento_url = f"{BASE_URL_RASTREAMENTO}{url_for('rastreamento', unique_id=unique_id)}"
+                    
+                    # 2. Gera o PDF em um buffer de memória
+                    pdf = FPDF('P', 'mm', 'A4')
+                    pdf.set_auto_page_break(auto=True, margin=15)
+                    
+                    gerar_pdf_com_qr(pdf, row.to_dict(), unique_id, rastreamento_url)
+                    
+                    pdf_output = pdf.output(dest='S').encode('latin-1')
+                    
+                    # 3. Adiciona o PDF ao ZIP
+                    pdf_filename = f"documento_{unique_id}.pdf"
+                    zip_file.writestr(pdf_filename, pdf_output)
                 
-                # 1. Cria a URL de rastreamento para o QR Code
-                rastreamento_url = f"{BASE_URL_RASTREAMENTO}{url_for('rastreamento', unique_id=unique_id)}"
-                
-                # 2. Gera o PDF em um buffer de memória
-                pdf = FPDF('P', 'mm', 'A4')
-                pdf.set_auto_page_break(auto=True, margin=15)
-                
-                gerar_pdf_com_qr(pdf, row.to_dict(), unique_id, rastreamento_url)
-                
-                pdf_output = pdf.output(dest='S').encode('latin-1')
-                
-                # 3. Adiciona o PDF ao ZIP
-                pdf_filename = f"documento_{unique_id}.pdf"
-                zip_file.writestr(pdf_filename, pdf_output)
+                except Exception as row_e:
+                    # **NOVO**: Captura o erro específico da linha e retorna imediatamente
+                    error_message = f"Erro fatal ao gerar o PDF na linha {index + 1} (ID: {row.get('ID_UNICO', 'N/A')}). Detalhe: {row_e}"
+                    # Garantimos que o Flask retorne um 500 antes do timeout
+                    return error_message, 500
 
         zip_buffer.seek(0)
         
@@ -178,7 +184,7 @@ def upload_file():
         )
 
     except Exception as e:
-        # Erro genérico de processamento
+        # Erro genérico de processamento (fora do loop)
         return f'Erro de processamento no servidor (Backend): {e}', 500
 
 # Rota de rastreamento (simulada)
