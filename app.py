@@ -147,19 +147,26 @@ def upload_file():
         # Detecção e leitura do arquivo
         df = None # Inicializa df
         if filename.endswith(('.xls', '.xlsx')):
+            file_stream = io.BytesIO(file_bytes)
+            
+            # TENTATIVA 1: Ler como XLSX (OpenPyXL)
             try:
-                print(f"DEBUG: Tentando ler arquivo Excel: {filename}")
-                
-                # CORREÇÃO FINAL: Usar io.BytesIO E especificar o engine 'openpyxl'
-                file_stream = io.BytesIO(file_bytes)
+                print(f"DEBUG: Tentando ler Excel como XLSX (OpenPyXL): {filename}")
                 df = pd.read_excel(file_stream, engine='openpyxl') 
+                print(f"DEBUG: Excel lido com SUCESSO via OpenPyXL. {len(df)} linhas.")
+            except Exception as e_openpyxl:
+                file_stream.seek(0) # Volta o ponteiro para o início para tentar de novo
                 
-                print(f"DEBUG: Excel lido com SUCESSO. {len(df)} linhas.")
-            except Exception as e:
-                # Captura e imprime o erro específico da leitura do Excel
-                error_traceback = traceback.format_exc()
-                print(f"ERRO FATAL LEITURA EXCEL: {error_traceback}")
-                return f'Erro ao ler arquivo Excel: {e}', 500
+                # TENTATIVA 2: Ler como XLS (xlrd)
+                try:
+                    print(f"DEBUG: Falha em OpenPyXL. Tentando como XLS (xlrd): {filename}")
+                    df = pd.read_excel(file_stream, engine='xlrd') 
+                    print(f"DEBUG: Excel lido com SUCESSO via xlrd. {len(df)} linhas.")
+                except Exception as e_xlrd:
+                    # Captura e imprime os dois erros
+                    error_traceback = traceback.format_exc()
+                    print(f"ERRO FATAL LEITURA EXCEL (Final): {error_traceback}")
+                    return f'Erro ao ler arquivo Excel. Tentativas com openpyxl (xlsx) e xlrd (xls) falharam. Por favor, verifique se o arquivo nao esta corrompido ou se esta no formato padrao.', 500
                 
         elif filename.endswith('.csv'):
             # Pré-processamento das quebras de linha e leitura do CSV
