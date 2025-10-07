@@ -109,25 +109,39 @@ def upload_file():
             # Retorna o erro no AJAX do frontend
             return f'Erro ao ler arquivo Excel: {e}', 500
     elif filename.endswith('.csv'):
-        try:
-            # TENTA LER CSV com UTF-8 (Correção da Codificação)
-            df = pd.read_csv(file_stream, encoding='utf-8')
-        except UnicodeDecodeError:
-            # Se a leitura falhar, tenta com codificação 'latin-1' (comum em PT-BR)
-            file_stream.seek(0) # Volta ao início do arquivo
-            try:
-                df = pd.read_csv(file_stream, encoding='latin-1')
-            except Exception as e:
-                return f'Erro ao ler arquivo CSV (codificação): {e}', 500
-        except Exception as e:
-            return f'Erro ao ler arquivo CSV: {e}', 500
+        # Tenta ler CSV com os delimitadores mais comuns e UTF-8
+        for encoding in ['utf-8', 'latin-1']:
+            for delimiter in [',', ';']: # Tenta vírgula e ponto-e-vírgula
+                try:
+                    file_stream.seek(0)
+                    # CORREÇÃO AQUI: adicionando o separador 'sep'
+                    df = pd.read_csv(file_stream, encoding=encoding, sep=delimiter)
+                    
+                    # Se a leitura for bem sucedida e tiver pelo menos 2 colunas, consideramos OK
+                    if len(df.columns) > 1:
+                        # Limpa espaços em branco nos nomes das colunas
+                        df.columns = df.columns.str.strip()
+                        # Sai do loop
+                        break 
+                    else:
+                        continue # Tenta o próximo delimitador/encoding
+                except Exception:
+                    continue # Tenta o próximo delimitador/encoding
+            if 'df' in locals() and len(df.columns) > 1:
+                break
+        
+        if 'df' not in locals() or len(df.columns) <= 1:
+            return 'Erro ao ler arquivo CSV. Verifique o delimitador (vírgula ou ponto-e-vírgula) e a codificação.', 500
     else:
         return 'Formato de arquivo não suportado. Use CSV ou Excel.', 400
 
     # Validação de colunas obrigatórias
     colunas_obrigatorias = ['ID_UNICO', 'NOME_CLIENTE', 'DATA_EMISSAO']
+    # Garante que as colunas existem
     if not all(col in df.columns for col in colunas_obrigatorias):
-        return f'Arquivo precisa das colunas: {", ".join(colunas_obrigatorias)}', 400
+        # Retorna as colunas encontradas para ajudar na depuração
+        colunas_encontradas = ", ".join(df.columns.tolist())
+        return f'Arquivo precisa das colunas: {", ".join(colunas_obrigatorias)}. Colunas encontradas: {colunas_encontradas}', 400
 
     # Criação do ZIP e buffer de memória para o ZIP
     zip_buffer = io.BytesIO()
@@ -139,18 +153,14 @@ def upload_file():
                 unique_id = str(row['ID_UNICO'])
                 
                 # 1. Cria a URL de rastreamento para o QR Code
-                # Usamos url_for para criar um link dinâmico, simulando o endpoint de rastreamento
-                # Usando a variável BASE_URL_RASTREAMENTO global
                 rastreamento_url = f"{BASE_URL_RASTREAMENTO}{url_for('rastreamento', unique_id=unique_id)}"
                 
                 # 2. Gera o PDF em um buffer de memória
                 pdf = FPDF('P', 'mm', 'A4')
                 pdf.set_auto_page_break(auto=True, margin=15)
                 
-                # CHAMA A FUNÇÃO LOCALMENTE DEFINIDA
                 gerar_pdf_com_qr(pdf, row.to_dict(), unique_id, rastreamento_url)
                 
-                # O FPDF precisa que a saída seja codificada para ser escrita no buffer
                 pdf_output = pdf.output(dest='S').encode('latin-1')
                 
                 # 3. Adiciona o PDF ao ZIP
