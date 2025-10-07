@@ -1,1 +1,1 @@
-Flaskgunicornpandasopenpyxl  # Necessário para ler arquivos .xlsxqrcodefpdfPillow
+FlaskgunicornpandasopenpyxlqrcodefpdfPillow
