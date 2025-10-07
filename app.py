@@ -149,9 +149,9 @@ def upload_file():
         if filename.endswith(('.xls', '.xlsx')):
             try:
                 print(f"DEBUG: Tentando ler arquivo Excel: {filename}")
-                file_stream = io.BytesIO(file_bytes)
-                # CORREÇÃO CRÍTICA: Especifica o engine OpenPyXL para evitar o ValueError
-                df = pd.read_excel(file_stream, engine='openpyxl') 
+                # CORREÇÃO CRÍTICA: Passa os bytes crus (file_bytes) diretamente para Pandas
+                # para evitar o erro 'BadZipFile' que ocorre ao envolver em io.BytesIO.
+                df = pd.read_excel(file_bytes, engine='openpyxl') 
                 print(f"DEBUG: Excel lido com SUCESSO. {len(df)} linhas.")
             except Exception as e:
                 # Captura e imprime o erro específico da leitura do Excel
