@@ -21,7 +21,7 @@ BASE_URL_RASTREAMENTO = BASE_URL
 # FUNÇÃO AUXILIAR CRÍTICA: Sanitiza o texto para FPDF
 def sanitize_text(text):
     """
-    Garante que o texto é seguro para FPDF, removendo ou ignorando 
+    Garantes que o texto é seguro para FPDF, removendo ou ignorando 
     caracteres que não são ASCII (como acentos e cedilha).
     """
     if pd.isna(text) or text is None:
@@ -30,13 +30,6 @@ def sanitize_text(text):
     # Converte para string, depois força codificação latin-1 (padrão FPDF)
     # usando 'ignore' para remover caracteres não suportados, e decodifica de volta.
     return str(text).encode('latin-1', 'ignore').decode('latin-1').strip()
-
-# Função auxiliar para configurar o PDF e a célula do texto
-def set_pdf_style(pdf):
-    """Configura o estilo padrão do PDF."""
-    pdf.set_font("Arial", size=12)
-    pdf.set_margins(10, 10, 10)
-    pdf.add_page()
 
 # FUNÇÃO PRINCIPAL: Gera o PDF a partir dos dados de uma linha
 def gerar_pdf_com_qr(pdf, row_data, unique_id, rastreamento_url):
@@ -54,7 +47,6 @@ def gerar_pdf_com_qr(pdf, row_data, unique_id, rastreamento_url):
     pdf.set_font("Arial", '', 12)
     
     # 1. Sanitiza os dados da planilha antes de usar
-    # Usando .get() para evitar KeyErrors se a coluna não existir (embora já validamos)
     nome_cliente = sanitize_text(row_data.get('NOME_CLIENTE', 'N/A'))
     data_emissao = sanitize_text(row_data.get('DATA_EMISSAO', 'N/A'))
     
@@ -90,7 +82,6 @@ def gerar_pdf_com_qr(pdf, row_data, unique_id, rastreamento_url):
     img_buffer.seek(0)
 
     # Adiciona a imagem ao PDF
-    page_width = pdf.w - 2 * pdf.l_margin
     img_size = 50 
     x_pos = (pdf.w - img_size) / 2
     
@@ -160,18 +151,20 @@ def upload_file():
                 # TENTATIVA 2: Ler como XLS (xlrd)
                 try:
                     print(f"DEBUG: Falha em OpenPyXL. Tentando como XLS (xlrd): {filename}")
+                    # Este bloco irá falhar no Render pois 'xlrd' não está instalado,
+                    # mas o código é mantido para clareza sobre as tentativas.
                     df = pd.read_excel(file_stream, engine='xlrd') 
                     print(f"DEBUG: Excel lido com SUCESSO via xlrd. {len(df)} linhas.")
                 except Exception as e_xlrd:
-                    # Captura e imprime os dois erros
                     error_traceback = traceback.format_exc()
                     print(f"ERRO FATAL LEITURA EXCEL (Final): {error_traceback}")
-                    return f'Erro ao ler arquivo Excel. Tentativas com openpyxl (xlsx) e xlrd (xls) falharam. Por favor, verifique se o arquivo nao esta corrompido ou se esta no formato padrao.', 500
+                    return f'Erro ao ler arquivo Excel. Tentativas com openpyxl (xlsx) e xlrd (xls) falharam. Por favor, use um arquivo CSV.', 500
                 
         elif filename.endswith('.csv'):
             # Pré-processamento das quebras de linha e leitura do CSV
             try:
-                content_str = file_bytes.decode('latin-1')
+                # Usa 'latin-1' para compatibilidade máxima com CSVs brasileiros
+                content_str = file_bytes.decode('latin-1') 
                 content_str = content_str.replace('\r\n', '\n').replace('\r', '\n')
                 file_stream_processed = io.StringIO(content_str)
             except Exception as e:
@@ -204,7 +197,7 @@ def upload_file():
         colunas_obrigatorias = ['ID_UNICO', 'NOME_CLIENTE', 'DATA_EMISSAO']
         
         if len(df) == 0:
-            return 'O arquivo CSV/Excel foi lido, mas não contém nenhuma linha de dados válida além do cabeçalho. Por favor, verifique se o arquivo não está vazio, ou se as linhas estão formatadas corretamente.', 400
+            return 'O arquivo CSV/Excel foi lido, mas não contém nenhuma linha de dados válida.', 400
 
         if not all(col in df.columns for col in colunas_obrigatorias):
             colunas_encontradas = ", ".join(df.columns.tolist())
@@ -276,7 +269,7 @@ def rastreamento(unique_id):
         base_url=BASE_URL_RASTREAMENTO
     )
 
-# Criação de um template HTML simples para a página de rastreamento
+# Criação de um template HTML simples para a página de rastreamento (Rota de teste)
 @app.route('/rastreamento.html')
 def rastreamento_html():
     return render_template('rastreamento.html')
