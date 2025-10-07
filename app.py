@@ -12,11 +12,24 @@ import numpy as np # Importado para ajudar a tratar valores NaN (Not a Number)
 # Configurações iniciais
 app = Flask(__name__)
 # A URL base usada para rastreamento (o Render a define)
-# Mantemos a URL fixa, embora o Render a defina
 BASE_URL = 'https://pdf-rastreavel-app.onrender.com' 
 
 # Variável de URL de Rastreamento (A SER USADA NO QR CODE)
 BASE_URL_RASTREAMENTO = BASE_URL
+
+# FUNÇÃO AUXILIAR CRÍTICA: Sanitiza o texto para FPDF
+def sanitize_text(text):
+    """
+    Garante que o texto é seguro para FPDF, removendo ou ignorando 
+    caracteres que não são ASCII (como acentos e cedilha).
+    """
+    if pd.isna(text) or text is None:
+        return 'N/A'
+    
+    # Converte para string, depois força codificação latin-1 (padrão FPDF)
+    # usando 'ignore' para remover caracteres não suportados, e decodifica de volta.
+    # O FPDF-1.7.2 só suporta caracteres ISO-8859-1 (latin-1) nativamente.
+    return str(text).encode('latin-1', 'ignore').decode('latin-1').strip()
 
 # Função auxiliar para configurar o PDF e a célula do texto
 def set_pdf_style(pdf):
@@ -29,26 +42,28 @@ def set_pdf_style(pdf):
 def gerar_pdf_com_qr(pdf, row_data, unique_id, rastreamento_url):
     """
     Gera o conteúdo de um único PDF (uma página) com os dados da linha 
-    e um QR Code rastreável.
+    e um QR Code rastreável, com sanitizacao de dados.
     """
     pdf.add_page()
 
-    # Título
+    # Título (sem acentos para segurança máxima no FPDF)
     pdf.set_font("Arial", 'B', 18)
-    pdf.cell(0, 15, 'Documento Rastreável', 0, 1, 'C')
+    pdf.cell(0, 15, 'Documento Rastreavel', 0, 1, 'C')
 
     # Dados
     pdf.set_font("Arial", '', 12)
-    # Garante que os valores de row_data não são NaN para evitar erro no f-string
-    nome_cliente = str(row_data.get('NOME_CLIENTE', 'N/A')) if pd.notna(row_data.get('NOME_CLIENTE')) else 'N/A'
-    data_emissao = str(row_data.get('DATA_EMISSAO', 'N/A')) if pd.notna(row_data.get('DATA_EMISSAO')) else 'N/A'
     
-    pdf.cell(0, 8, f"ID Único: {unique_id}", 0, 1)
+    # 1. Sanitiza os dados da planilha antes de usar
+    nome_cliente = sanitize_text(row_data.get('NOME_CLIENTE'))
+    data_emissao = sanitize_text(row_data.get('DATA_EMISSAO'))
+    
+    # 2. Usa os dados sanitizados e strings fixas sem acento
+    pdf.cell(0, 8, f"ID Unico: {unique_id}", 0, 1)
     pdf.cell(0, 8, f"Nome do Cliente: {nome_cliente}", 0, 1)
-    pdf.cell(0, 8, f"Data de Emissão: {data_emissao}", 0, 1)
+    pdf.cell(0, 8, f"Data de Emissao: {data_emissao}", 0, 1)
     pdf.ln(10)
 
-    # Informação de Rastreamento
+    # Informacao de Rastreamento (sem acento)
     pdf.set_font("Arial", 'I', 10)
     pdf.multi_cell(0, 5, 
         f"Este documento pode ser verificado em: {rastreamento_url}", 0, 'C'
@@ -81,7 +96,7 @@ def gerar_pdf_com_qr(pdf, row_data, unique_id, rastreamento_url):
     pdf.image(img_buffer, x=x_pos, y=pdf.get_y(), w=img_size, h=img_size, type='PNG')
     pdf.ln(img_size + 10) 
     
-    # Campo de Rastreio Simulado (Rodapé)
+    # Campo de Rastreio Simulado (Rodapé - sem acento)
     pdf.set_y(pdf.h - 20)
     pdf.set_font("Arial", 'B', 8)
     pdf.cell(0, 5, f"CHAVE DE RASTREIO INTERNO: {unique_id}", 0, 0, 'C')
