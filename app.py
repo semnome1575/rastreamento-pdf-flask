@@ -151,8 +151,7 @@ def upload_file():
                 # TENTATIVA 2: Ler como XLS (xlrd)
                 try:
                     print(f"DEBUG: Falha em OpenPyXL. Tentando como XLS (xlrd): {filename}")
-                    # Este bloco irá falhar no Render pois 'xlrd' não está instalado,
-                    # mas o código é mantido para clareza sobre as tentativas.
+                    # Este bloco irá falhar no Render pois 'xlrd' não está instalado.
                     df = pd.read_excel(file_stream, engine='xlrd') 
                     print(f"DEBUG: Excel lido com SUCESSO via xlrd. {len(df)} linhas.")
                 except Exception as e_xlrd:
@@ -161,32 +160,28 @@ def upload_file():
                     return f'Erro ao ler arquivo Excel. Tentativas com openpyxl (xlsx) e xlrd (xls) falharam. Por favor, use um arquivo CSV.', 500
                 
         elif filename.endswith('.csv'):
-            # Pré-processamento das quebras de linha e leitura do CSV
+            # NOVO: Abordagem mais robusta para leitura de CSV usando BytesIO
+            # Passa o fluxo de bytes diretamente para o Pandas para melhor detecção de quebras de linha
+            file_stream_bytes = io.BytesIO(file_bytes)
+            
+            # Tentativa 1: Delimitador Vírgula (encoding latin-1)
             try:
-                # Usa 'latin-1' para compatibilidade máxima com CSVs brasileiros
-                content_str = file_bytes.decode('latin-1') 
-                content_str = content_str.replace('\r\n', '\n').replace('\r', '\n')
-                file_stream_processed = io.StringIO(content_str)
-            except Exception as e:
-                return f'Erro na decodificação do arquivo CSV (Latin-1). Detalhe: {e}', 500
-
-
-            # Tentativa 1: Delimitador Vírgula
-            try:
-                file_stream_processed.seek(0)
-                df = pd.read_csv(file_stream_processed, sep=',')
+                file_stream_bytes.seek(0)
+                # O Pandas lida melhor com quebras de linha quando recebe o BytesIO diretamente
+                df = pd.read_csv(file_stream_bytes, sep=',', encoding='latin-1')
                 df.columns = df.columns.str.strip()
                 print(f"DEBUG: CSV lido com SUCESSO (Vírgula) - {len(df)} linhas. Colunas encontradas: {df.columns.tolist()}")
             except Exception as e:
-                # Tentativa 2: Tenta Ponto-e-vírgula
+                # Tentativa 2: Tenta Ponto-e-vírgula (encoding latin-1)
                 try:
-                    file_stream_processed.seek(0)
-                    df = pd.read_csv(file_stream_processed, sep=';')
+                    file_stream_bytes.seek(0)
+                    df = pd.read_csv(file_stream_bytes, sep=';', encoding='latin-1')
                     df.columns = df.columns.str.strip()
                     print(f"DEBUG: CSV lido com SUCESSO (Ponto-e-vírgula) - {len(df)} linhas. Colunas encontradas: {df.columns.tolist()}")
                 except Exception as e2:
                     return f'Erro fatal ao ler o arquivo CSV. Tente salvar o arquivo como "CSV (Delimitado por vírgulas)" e verifique a codificação. Detalhe da falha: {e2}', 500
                 
+            # Verificação de leitura bem-sucedida, especialmente se tiver poucas colunas
             if df is None or len(df.columns) <= 1:
                 return 'Erro ao ler arquivo CSV. O delimitador não foi reconhecido corretamente. Verifique se o arquivo está formatado como CSV.', 500
                 
@@ -196,6 +191,7 @@ def upload_file():
         # Validação de colunas obrigatórias
         colunas_obrigatorias = ['ID_UNICO', 'NOME_CLIENTE', 'DATA_EMISSAO']
         
+        # AQUI O ERRO 400 OCORREU ANTES, AGORA DEVE SER RESOLVIDO
         if len(df) == 0:
             return 'O arquivo CSV/Excel foi lido, mas não contém nenhuma linha de dados válida.', 400
 
