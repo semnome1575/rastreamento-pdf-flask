@@ -152,7 +152,8 @@ def upload_file():
             file_stream.seek(0)
             df = pd.read_csv(file_stream, encoding='latin-1', sep=',')
             df.columns = df.columns.str.strip()
-            print(f"DEBUG: CSV lido com SUCESSO (Vírgula, Latin-1) - {len(df)} linhas.")
+            # LOG DE DEBUG ATUALIZADO PARA INCLUIR COLUNAS
+            print(f"DEBUG: CSV lido com SUCESSO (Vírgula, Latin-1) - {len(df)} linhas. Colunas encontradas: {df.columns.tolist()}")
             
         except Exception as e:
             # Tentativa 2: Falhou na vírgula, tenta Ponto-e-vírgula (padrão BR) com Latin-1
@@ -160,7 +161,8 @@ def upload_file():
                 file_stream.seek(0)
                 df = pd.read_csv(file_stream, encoding='latin-1', sep=';')
                 df.columns = df.columns.str.strip()
-                print(f"DEBUG: CSV lido com SUCESSO (Ponto-e-vírgula, Latin-1) - {len(df)} linhas.")
+                # LOG DE DEBUG ATUALIZADO PARA INCLUIR COLUNAS
+                print(f"DEBUG: CSV lido com SUCESSO (Ponto-e-vírgula, Latin-1) - {len(df)} linhas. Colunas encontradas: {df.columns.tolist()}")
             except Exception as e2:
                 # Falha total: retorna erro detalhado
                 return f'Erro fatal ao ler o arquivo CSV. Tente salvar o arquivo como "CSV (Delimitado por vírgulas)" e verifique a codificação. Detalhe da falha: {e2}', 500
@@ -173,6 +175,11 @@ def upload_file():
 
     # Validação de colunas obrigatórias
     colunas_obrigatorias = ['ID_UNICO', 'NOME_CLIENTE', 'DATA_EMISSAO']
+    
+    # NOVO: Verificação para o caso de 0 linhas, que pode bagunçar as colunas
+    if len(df) == 0:
+        return 'O arquivo CSV/Excel foi lido, mas não contém nenhuma linha de dados válida além do cabeçalho. Por favor, verifique se o arquivo não está vazio, ou se as linhas estão formatadas corretamente.', 400
+
     if not all(col in df.columns for col in colunas_obrigatorias):
         colunas_encontradas = ", ".join(df.columns.tolist())
         return f'Arquivo precisa das colunas: {", ".join(colunas_obrigatorias)}. Colunas encontradas: {colunas_encontradas}', 400
