@@ -150,7 +150,7 @@ def upload_file():
             # Itera sobre cada linha da planilha
             for index, row in df.iterrows():
                 try:
-                    # **AJUSTE AQUI**: Trata valores nulos ou NaN no ID_UNICO
+                    # Trata valores nulos ou NaN no ID_UNICO
                     unique_id_raw = row.get('ID_UNICO')
                     if pd.isna(unique_id_raw):
                         unique_id = f"ERRO-LINHA-{index + 1}" # Se for nulo, usa um ID de erro
@@ -168,7 +168,10 @@ def upload_file():
                     
                     gerar_pdf_com_qr(pdf, row.to_dict(), unique_id, rastreamento_url)
                     
-                    pdf_output = pdf.output(dest='S').encode('latin-1')
+                    # **MUDANÇA CRÍTICA AQUI**: Obtém os bytes diretamente no buffer
+                    pdf_output_buffer = io.BytesIO()
+                    pdf.output(dest='B', out=pdf_output_buffer)
+                    pdf_output = pdf_output_buffer.getvalue() # Obtém os bytes
                     
                     # 3. Adiciona o PDF ao ZIP
                     pdf_filename = f"documento_{unique_id}.pdf"
