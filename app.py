@@ -150,7 +150,8 @@ def upload_file():
             try:
                 print(f"DEBUG: Tentando ler arquivo Excel: {filename}")
                 file_stream = io.BytesIO(file_bytes)
-                df = pd.read_excel(file_stream)
+                # CORREÇÃO CRÍTICA: Especifica o engine OpenPyXL para evitar o ValueError
+                df = pd.read_excel(file_stream, engine='openpyxl') 
                 print(f"DEBUG: Excel lido com SUCESSO. {len(df)} linhas.")
             except Exception as e:
                 # Captura e imprime o erro específico da leitura do Excel
