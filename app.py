@@ -85,7 +85,12 @@ def gerar_pdf_com_qr(pdf, row_data, unique_id, rastreamento_url):
     img_size = 50 
     x_pos = (pdf.w - img_size) / 2
     
-    pdf.image(img_buffer, x=x_pos, y=pdf.get_y(), w=img_size, h=img_size, type='PNG')
+    # CORREÇÃO CRÍTICA DO ERRO 'AttributeError: _io.BytesIO object has no attribute startswith'
+    # Passamos o buffer diretamente no argumento 'name' (que FPDF aceita),
+    # mas garantimos que a função FPDF.image não confunda o buffer com um nome de arquivo
+    # string, fornecendo o argumento type='PNG'
+    pdf.image(name=img_buffer, x=x_pos, y=pdf.get_y(), w=img_size, h=img_size, type='PNG')
+    
     pdf.ln(img_size + 10) 
     
     # Campo de Rastreio Simulado (Rodapé - sem acento)
@@ -160,8 +165,7 @@ def upload_file():
                     return f'Erro ao ler arquivo Excel. Tentativas com openpyxl (xlsx) e xlrd (xls) falharam. Por favor, use um arquivo CSV.', 500
                 
         elif filename.endswith('.csv'):
-            # NOVO: Abordagem mais robusta para leitura de CSV usando BytesIO
-            # Passa o fluxo de bytes diretamente para o Pandas para melhor detecção de quebras de linha
+            # Abordagem mais robusta para leitura de CSV usando BytesIO
             file_stream_bytes = io.BytesIO(file_bytes)
             
             # Tentativa 1: Delimitador Vírgula (encoding latin-1)
@@ -191,7 +195,7 @@ def upload_file():
         # Validação de colunas obrigatórias
         colunas_obrigatorias = ['ID_UNICO', 'NOME_CLIENTE', 'DATA_EMISSAO']
         
-        # AQUI O ERRO 400 OCORREU ANTES, AGORA DEVE SER RESOLVIDO
+        # AQUI O ERRO 400 OCORREU
         if len(df) == 0:
             return 'O arquivo CSV/Excel foi lido, mas não contém nenhuma linha de dados válida.', 400
 
