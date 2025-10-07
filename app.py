@@ -8,6 +8,7 @@ from fpdf import FPDF
 from PIL import Image
 import qrcode
 import numpy as np # Importado para ajudar a tratar valores NaN (Not a Number)
+import traceback # Importado para capturar a pilha de erros (traceback)
 
 # Configurações iniciais
 app = Flask(__name__)
@@ -53,8 +54,9 @@ def gerar_pdf_com_qr(pdf, row_data, unique_id, rastreamento_url):
     pdf.set_font("Arial", '', 12)
     
     # 1. Sanitiza os dados da planilha antes de usar
-    nome_cliente = sanitize_text(row_data.get('NOME_CLIENTE'))
-    data_emissao = sanitize_text(row_data.get('DATA_EMISSAO'))
+    # Usando .get() para evitar KeyErrors se a coluna não existir (embora já validamos)
+    nome_cliente = sanitize_text(row_data.get('NOME_CLIENTE', 'N/A'))
+    data_emissao = sanitize_text(row_data.get('DATA_EMISSAO', 'N/A'))
     
     # 2. Usa os dados sanitizados e strings fixas sem acento
     pdf.cell(0, 8, f"ID Unico: {unique_id}", 0, 1)
@@ -128,126 +130,130 @@ def index():
 # Rota de upload de arquivo
 @app.route('/upload', methods=['POST'])
 def upload_file():
-    if 'file' not in request.files:
-        return 'Nenhum arquivo enviado', 400
-    
-    file = request.files['file']
-    if file.filename == '':
-        return 'Nenhum arquivo selecionado', 400
-    
-    filename = secure_filename(file.filename)
-    
-    # Lê o arquivo COMPLETO em memória
-    file_bytes = file.read()
-    
-    # Detecção e leitura do arquivo
-    df = None # Inicializa df
-    if filename.endswith(('.xls', '.xlsx')):
-        try:
-            file_stream = io.BytesIO(file_bytes)
-            df = pd.read_excel(file_stream)
-        except Exception as e:
-            return f'Erro ao ler arquivo Excel: {e}', 500
-            
-    elif filename.endswith('.csv'):
-        # NOVO PASSO CRÍTICO: Pré-processamento das quebras de linha
-        try:
-            # 1. Decodifica os bytes (latin-1 para suportar acentos)
-            content_str = file_bytes.decode('latin-1')
-            
-            # 2. Substitui todas as variações de quebra de linha por '\n' (padrão universal)
-            content_str = content_str.replace('\r\n', '\n').replace('\r', '\n')
-            
-            # 3. Cria um novo stream de texto para o Pandas
-            file_stream_processed = io.StringIO(content_str)
-            
-        except Exception as e:
-            return f'Erro na decodificação do arquivo CSV (Latin-1). Detalhe: {e}', 500
+    # NOVO: Bloco de exceção principal para capturar e registrar qualquer erro fatal
+    try:
+        if 'file' not in request.files:
+            return 'Nenhum arquivo enviado', 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return 'Nenhum arquivo selecionado', 400
+        
+        filename = secure_filename(file.filename)
+        
+        # Lê o arquivo COMPLETO em memória
+        file_bytes = file.read()
+        
+        # Detecção e leitura do arquivo
+        df = None # Inicializa df
+        if filename.endswith(('.xls', '.xlsx')):
+            try:
+                print(f"DEBUG: Tentando ler arquivo Excel: {filename}")
+                file_stream = io.BytesIO(file_bytes)
+                df = pd.read_excel(file_stream)
+                print(f"DEBUG: Excel lido com SUCESSO. {len(df)} linhas.")
+            except Exception as e:
+                # Captura e imprime o erro específico da leitura do Excel
+                error_traceback = traceback.format_exc()
+                print(f"ERRO FATAL LEITURA EXCEL: {error_traceback}")
+                return f'Erro ao ler arquivo Excel: {e}', 500
+                
+        elif filename.endswith('.csv'):
+            # Pré-processamento das quebras de linha e leitura do CSV
+            try:
+                content_str = file_bytes.decode('latin-1')
+                content_str = content_str.replace('\r\n', '\n').replace('\r', '\n')
+                file_stream_processed = io.StringIO(content_str)
+            except Exception as e:
+                return f'Erro na decodificação do arquivo CSV (Latin-1). Detalhe: {e}', 500
 
 
-        # Tentativa 1: Delimitador Vírgula (padrão US/Internacional)
-        try:
-            file_stream_processed.seek(0)
-            df = pd.read_csv(file_stream_processed, sep=',')
-            df.columns = df.columns.str.strip()
-            
-            print(f"DEBUG: CSV lido com SUCESSO (Vírgula) - {len(df)} linhas. Colunas encontradas: {df.columns.tolist()}")
-            
-        except Exception as e:
-            # Tentativa 2: Falhou na vírgula, tenta Ponto-e-vírgula (padrão BR)
+            # Tentativa 1: Delimitador Vírgula
             try:
                 file_stream_processed.seek(0)
-                df = pd.read_csv(file_stream_processed, sep=';')
+                df = pd.read_csv(file_stream_processed, sep=',')
                 df.columns = df.columns.str.strip()
-                
-                print(f"DEBUG: CSV lido com SUCESSO (Ponto-e-vírgula) - {len(df)} linhas. Colunas encontradas: {df.columns.tolist()}")
-            except Exception as e2:
-                # Falha total: retorna erro detalhado
-                return f'Erro fatal ao ler o arquivo CSV. Tente salvar o arquivo como "CSV (Delimitado por vírgulas)" e verifique a codificação. Detalhe da falha: {e2}', 500
-            
-        if df is None or len(df.columns) <= 1:
-            return 'Erro ao ler arquivo CSV. O delimitador não foi reconhecido corretamente. Verifique se o arquivo está formatado como CSV.', 500
-            
-    else:
-        return 'Formato de arquivo não suportado. Use CSV ou Excel.', 400
-
-    # Validação de colunas obrigatórias
-    colunas_obrigatorias = ['ID_UNICO', 'NOME_CLIENTE', 'DATA_EMISSAO']
-    
-    # NOVO: Verificação para o caso de 0 linhas, que pode bagunçar as colunas
-    if len(df) == 0:
-        return 'O arquivo CSV/Excel foi lido, mas não contém nenhuma linha de dados válida além do cabeçalho. Por favor, verifique se o arquivo não está vazio, ou se as linhas estão formatadas corretamente.', 400
-
-    if not all(col in df.columns for col in colunas_obrigatorias):
-        colunas_encontradas = ", ".join(df.columns.tolist())
-        return f'Arquivo precisa das colunas: {", ".join(colunas_obrigatorias)}. Colunas encontradas: {colunas_encontradas}', 400
-
-    # Criação do ZIP e buffer de memória para o ZIP
-    zip_buffer = io.BytesIO()
-    
-    try:
-        with zipfile.ZipFile(zip_buffer, 'a', zipfile.ZIP_DEFLATED, False) as zip_file:
-            for index, row in df.iterrows():
+                print(f"DEBUG: CSV lido com SUCESSO (Vírgula) - {len(df)} linhas. Colunas encontradas: {df.columns.tolist()}")
+            except Exception as e:
+                # Tentativa 2: Tenta Ponto-e-vírgula
                 try:
-                    # Trata valores nulos ou NaN no ID_UNICO
-                    unique_id_raw = row.get('ID_UNICO')
-                    # Usamos np.isnan para verificar NaN de forma segura
-                    if pd.isna(unique_id_raw) or (isinstance(unique_id_raw, float) and np.isnan(unique_id_raw)):
-                        unique_id = f"ERRO-LINHA-{index + 1}"
-                    else:
-                        unique_id = str(unique_id_raw).strip()
-                        if not unique_id:
-                            unique_id = f"ERRO-LINHA-{index + 1}"
-                    
-                    # 1. Cria a URL de rastreamento para o QR Code
-                    rastreamento_url = f"{BASE_URL_RASTREAMENTO}{url_for('rastreamento', unique_id=unique_id)}"
-                    
-                    # 2. Gera o PDF em um buffer de memória
-                    pdf = FPDF('P', 'mm', 'A4')
-                    pdf.set_auto_page_break(auto=True, margin=15)
-                    
-                    gerar_pdf_com_qr(pdf, row.to_dict(), unique_id, rastreamento_url)
-                    
-                    # Obtém os bytes diretamente no buffer
-                    pdf_output_buffer = io.BytesIO()
-                    pdf.output(dest='B', out=pdf_output_buffer)
-                    pdf_output = pdf_output_buffer.getvalue()
-                    
-                    # 3. Adiciona o PDF ao ZIP
-                    pdf_filename = f"documento_{unique_id}.pdf"
-                    zip_file.writestr(pdf_filename, pdf_output)
+                    file_stream_processed.seek(0)
+                    df = pd.read_csv(file_stream_processed, sep=';')
+                    df.columns = df.columns.str.strip()
+                    print(f"DEBUG: CSV lido com SUCESSO (Ponto-e-vírgula) - {len(df)} linhas. Colunas encontradas: {df.columns.tolist()}")
+                except Exception as e2:
+                    return f'Erro fatal ao ler o arquivo CSV. Tente salvar o arquivo como "CSV (Delimitado por vírgulas)" e verifique a codificação. Detalhe da falha: {e2}', 500
                 
-                except Exception as row_e:
-                    # Captura o erro específico da linha e retorna imediatamente
-                    error_message = f"Erro fatal ao gerar o PDF na linha {index + 1} (ID: {row.get('ID_UNICO', 'N/A')}). Detalhe: {row_e}"
-                    return error_message, 500
+            if df is None or len(df.columns) <= 1:
+                return 'Erro ao ler arquivo CSV. O delimitador não foi reconhecido corretamente. Verifique se o arquivo está formatado como CSV.', 500
+                
+        else:
+            return 'Formato de arquivo não suportado. Use CSV ou Excel.', 400
 
-        # Agora, envia o ZIP usando a função de streaming
-        return send_file_streamed(zip_buffer)
+        # Validação de colunas obrigatórias
+        colunas_obrigatorias = ['ID_UNICO', 'NOME_CLIENTE', 'DATA_EMISSAO']
+        
+        if len(df) == 0:
+            return 'O arquivo CSV/Excel foi lido, mas não contém nenhuma linha de dados válida além do cabeçalho. Por favor, verifique se o arquivo não está vazio, ou se as linhas estão formatadas corretamente.', 400
 
-    except Exception as e:
-        # Erro genérico de processamento (fora do loop)
-        return f'Erro de processamento no servidor (Backend): {e}', 500
+        if not all(col in df.columns for col in colunas_obrigatorias):
+            colunas_encontradas = ", ".join(df.columns.tolist())
+            return f'Arquivo precisa das colunas: {", ".join(colunas_obrigatorias)}. Colunas encontradas: {colunas_encontradas}', 400
+
+        # Criação do ZIP e buffer de memória para o ZIP
+        zip_buffer = io.BytesIO()
+        
+        try:
+            with zipfile.ZipFile(zip_buffer, 'a', zipfile.ZIP_DEFLATED, False) as zip_file:
+                for index, row in df.iterrows():
+                    try:
+                        # Trata valores nulos ou NaN no ID_UNICO
+                        unique_id_raw = row.get('ID_UNICO')
+                        if pd.isna(unique_id_raw) or (isinstance(unique_id_raw, float) and np.isnan(unique_id_raw)):
+                            unique_id = f"ERRO-LINHA-{index + 1}"
+                        else:
+                            unique_id = str(unique_id_raw).strip()
+                            if not unique_id:
+                                unique_id = f"ERRO-LINHA-{index + 1}"
+                        
+                        # 1. Cria a URL de rastreamento para o QR Code
+                        rastreamento_url = f"{BASE_URL_RASTREAMENTO}{url_for('rastreamento', unique_id=unique_id)}"
+                        
+                        # 2. Gera o PDF em um buffer de memória
+                        pdf = FPDF('P', 'mm', 'A4')
+                        pdf.set_auto_page_break(auto=True, margin=15)
+                        
+                        gerar_pdf_com_qr(pdf, row.to_dict(), unique_id, rastreamento_url)
+                        
+                        # Obtém os bytes diretamente no buffer
+                        pdf_output_buffer = io.BytesIO()
+                        pdf.output(dest='B', out=pdf_output_buffer)
+                        pdf_output = pdf_output_buffer.getvalue()
+                        
+                        # 3. Adiciona o PDF ao ZIP
+                        pdf_filename = f"documento_{unique_id}.pdf"
+                        zip_file.writestr(pdf_filename, pdf_output)
+                    
+                    except Exception as row_e:
+                        error_traceback = traceback.format_exc()
+                        print(f"ERRO FATAL GERAÇÃO PDF NA LINHA {index + 1}: {error_traceback}")
+                        error_message = f"Erro fatal ao gerar o PDF na linha {index + 1} (ID: {row.get('ID_UNICO', 'N/A')}). Detalhe: {row_e}"
+                        return error_message, 500
+
+            # Envia o ZIP usando a função de streaming
+            return send_file_streamed(zip_buffer)
+
+        except Exception as e:
+            error_traceback = traceback.format_exc()
+            print(f"ERRO DE PROCESSAMENTO NO SERVIDOR (FORA DO LOOP): {error_traceback}")
+            return f'Erro de processamento no servidor (Backend): {e}', 500
+    
+    except Exception as e_final:
+        # Última chance de logar se o erro for ainda mais alto na pilha
+        error_traceback = traceback.format_exc()
+        print(f"ERRO DE CONEXÃO/IO: {error_traceback}")
+        return f'Erro de conexão/IO. Detalhe: {e_final}', 500
+
 
 # Rota de rastreamento (simulada)
 @app.route('/rastreamento/<unique_id>')
