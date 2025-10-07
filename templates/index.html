@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gerador de PDFs com QR Code</title>
+    <!-- Tailwind CSS CDN (CORRIGIDO!) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Define a fonte Inter como padrão e fundo */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fb;
+        }
+
+        /* Estilos para a área de Drag-and-Drop */
+        .drop-area {
+            transition: border-color 0.3s ease, background-color 0.3s ease;
+        }
+        .drop-area.drag-over {
+            border-color: #4f46e5; /* primary color */
+            background-color: #eff6ff; /* blue-50 */
+        }
+    </style>
+    <script>
+        // Configuração do Tailwind para usar cores customizadas
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'primary': '#4f46e5',
+                        'secondary': '#8b5cf6',
+                    }
+                }
+            }
+        }
+
+        // --- Variáveis de Elementos DOM ---
+        const form = document.getElementById('upload-form');
+        const fileInput = document.getElementById('file-upload');
+        const submitButton = document.getElementById('submit-button');
+        const fileNameDisplay = document.getElementById('file-name');
+        const messageBox = document.getElementById('message-box');
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const dropArea = document.getElementById('drop-area');
+
+        // --- Funções de UI e Feedback ---
+
+        function showMessage(message, type) {
+            messageBox.textContent = message;
+            messageBox.classList.remove('hidden', 'bg-red-100', 'text-red-800', 'bg-green-100', 'text-green-800', 'border-red-400', 'border-green-400');
+            
+            if (type === 'error') {
+                messageBox.classList.add('bg-red-100', 'text-red-800', 'border-red-400');
+            } else if (type === 'success') {
+                messageBox.classList.add('bg-green-100', 'text-green-800', 'border-green-400');
+            }
+            
+            // Esconde a mensagem após 10 segundos
+            setTimeout(() => {
+                messageBox.classList.add('hidden');
+            }, 10000);
+        }
+
+        function handleFileSelection(file) {
+            if (file) {
+                fileNameDisplay.textContent = `Arquivo selecionado: ${file.name}`;
+                submitButton.disabled = false;
+                // Coloca o arquivo no input para que o form data consiga pegá-lo
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+            } else {
+                fileNameDisplay.textContent = 'Nenhum arquivo selecionado';
+                submitButton.disabled = true;
+            }
+            messageBox.classList.add('hidden');
+        }
+
+        // --- Lógica de Processamento e Upload ---
+
+        async function startProcessing(file) {
+            if (!file) {
+                showMessage('Por favor, selecione ou arraste um arquivo CSV ou XLSX.', 'error');
+                return;
+            }
+
+            // Ativa o estado de loading e desativa o botão
+            submitButton.disabled = true;
+            submitButton.textContent = 'Processando...';
+            loadingSpinner.classList.remove('hidden');
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                // Envia o arquivo para o servidor Flask
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (response.ok) {
+                    // Inicia o download do arquivo ZIP
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'documentos_rastreaveis.zip';
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    window.URL.revokeObjectURL(url);
+                    
+                    showMessage('Sucesso! O download do arquivo ZIP começou. Procure por documentos_rastreaveis.zip', 'success');
+                    
+                } else {
+                    // Captura e exibe a mensagem de erro retornada pelo Python
+                    const errorText = await response.text();
+                    showMessage(`Erro no processamento: ${errorText}`, 'error');
+                }
+
+            } catch (error) {
+                // Erro de rede ou comunicação
+                showMessage(`Erro de rede: Não foi possível conectar ao servidor.`, 'error');
+                console.error('Fetch error:', error);
+            } finally {
+                // Restaura o estado original
+                submitButton.disabled = false;
+                submitButton.textContent = 'Gerar e Baixar PDFs (ZIP)';
+                loadingSpinner.classList.add('hidden');
+                // Mantém o arquivo selecionado, mas re-habilita o botão
+                handleFileSelection(file);
+            }
+        }
+
+        // Função de envio padrão do formulário
+        function handleSubmit(event) {
+            event.preventDefault(); 
+            startProcessing(fileInput.files[0]);
+        }
+
+        // --- Lógica de Drag and Drop ---
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        function handleDrop(e) {
+            preventDefaults(e);
+            const dt = e.dataTransfer;
+            const file = dt.files[0];
+            
+            if (file && (file.name.endsWith('.csv') || file.name.endsWith('.xlsx') || file.name.endsWith('.xls'))) {
+                handleFileSelection(file);
+                // O processamento não começa automaticamente no drop, o usuário precisa clicar para ter certeza.
+            } else {
+                showMessage('Formato de arquivo inválido. Use .csv, .xlsx ou .xls.', 'error');
+                handleFileSelection(null);
+            }
+        }
+
+        // --- Inicialização de Event Listeners ---
+        document.addEventListener('DOMContentLoaded', () => {
+            // Eventos de Drag and Drop
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                dropArea.addEventListener(eventName, preventDefaults, false);
+            });
+
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropArea.addEventListener(eventName, () => dropArea.classList.add('drag-over'), false);
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropArea.addEventListener(eventName, () => dropArea.classList.remove('drag-over'), false);
+            });
+
+            dropArea.addEventListener('drop', handleDrop, false);
+            
+            // Evento de seleção de arquivo por clique
+            fileInput.addEventListener('change', () => {
+                const file = fileInput.files.length > 0 ? fileInput.files[0] : null;
+                handleFileSelection(file);
+            });
+
+            // Evento de submissão do formulário
+            form.addEventListener('submit', handleSubmit);
+        });
+    </script>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+
+    <div class="max-w-xl w-full p-8 space-y-6 bg-white shadow-2xl rounded-xl transform transition duration-500 hover:shadow-primary/50">
+        
+        <h1 class="text-3xl font-extrabold text-center text-gray-900 border-b pb-4">
+            Gerador de Documentos Rastreáveis
+        </h1>
+
+        <!-- Mensagem de Feedback (Erro ou Sucesso) -->
+        <div id="message-box" class="hidden p-4 rounded-lg border-l-4 font-medium" role="alert">
+            <!-- Conteúdo da mensagem será injetado pelo JavaScript -->
+        </div>
+
+        <p class="text-sm text-center text-gray-500">
+            Envie sua planilha (.csv ou .xlsx) para gerar um PDF com QR Code único para cada linha.
+        </p>
+
+        <form id="upload-form" class="space-y-6">
+            
+            <!-- Campo de Upload Personalizado -->
+            <div>
+                <label for="file-upload" class="block text-sm font-medium text-gray-700 mb-2">
+                    1. Selecione a Planilha:
+                </label>
+                <div id="drop-area" class="drop-area mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-lg">
+                    <div class="space-y-1 text-center">
+                        
+                        <!-- Ícone SVG -->
+                        <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
+                            <path d="M28 8H10a2 2 0 00-2 2v28a2 2 0 002 2h28a2 2 0 002-2V20M16 16v16h16V16H16zM24 4v16m-8-8h16" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+
+                        <div class="flex text-sm text-gray-600 justify-center">
+                            <label for="file-upload" class="relative cursor-pointer bg-white rounded-md font-medium text-primary hover:text-secondary focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-primary">
+                                <span>Clique para carregar</span>
+                                <input id="file-upload" name="file" type="file" class="sr-only" accept=".csv, .xlsx, .xls">
+                            </label>
+                            <p class="pl-1">ou arraste e solte</p>
+                        </div>
+                        <p class="text-xs text-gray-500" id="file-name">
+                            Nenhum arquivo selecionado
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Botão de Envio com Loading Spinner -->
+            <div>
+                <button type="submit" id="submit-button" disabled class="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-lg shadow-lg text-lg font-semibold text-white bg-primary hover:bg-secondary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition duration-150 ease-in-out transform hover:scale-[1.01] disabled:opacity-50">
+                    <svg id="loading-spinner" class="animate-spin -ml-1 mr-3 h-5 w-5 text-white hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Gerar e Baixar PDFs (ZIP)
+                </button>
+            </div>
+        </form>
+
+    </div>
+
+</body>
+</html>
