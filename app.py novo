@@ -1,0 +1,221 @@
+import os # <--- NOVO: Importamos a biblioteca 'os'
+import io
+import re
+import zipfile
+import pandas as pd
+import qrcode
+from fpdf import FPDF
+from PIL import Image
+from flask import Flask, render_template, request, send_file, redirect, url_for, abort
+
+# Configurações de Segurança
+# Permitir apenas estas extensões de arquivo
+ALLOWED_EXTENSIONS = {'csv', 'xls', 'xlsx'} 
+MAX_CONTENT_LENGTH = 16 * 1024 * 1024 # Limite de 16MB para o upload
+
+# --- CONFIGURAÇÃO DA URL DE RASTREAMENTO (CORREÇÃO FINAL) ---
+# O Render lerá a variável de ambiente 'BASE_URL_RASTREAMENTO' que configuramos lá.
+# Se a variável não existir (como ao rodar localmente), ele usará a URL de exemplo.
+BASE_URL_RASTREAMENTO = os.environ.get('BASE_URL_RASTREAMENTO', 'http://rastreio.exemplo.com.br/documento/') 
+
+
+app = Flask(__name__, template_folder='templates')
+app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
+
+
+# --- Funções de Segurança ---
+
+def allowed_file(filename):
+    """Verifica se a extensão do arquivo é permitida."""
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+# --- Funções de Geração de PDF ---
+
+def gerar_pdf_com_qr(dados_linha):
+    """
+    Gera um PDF contendo os dados de uma linha da planilha e um QR Code único.
+
+    Args:
+        dados_linha (pandas.Series): Uma linha de dados da planilha.
+        
+    Returns:
+        io.BytesIO: Um buffer de memória contendo o PDF gerado.
+    """
+    # 1. Extração de Dados e Criação da URL Única
+    documento_id = str(dados_linha.iloc[0]) 
+    
+    # Usa a URL real do servidor (lida de BASE_URL_RASTREAMENTO)
+    url_rastreamento = f"{BASE_URL_RASTREAMENTO}{documento_id}"
+    
+    dados_secundarios = dados_linha.iloc[1:]
+    
+    # 2. Geração do QR Code em Memória
+    qr_img = qrcode.make(url_rastreamento)
+    
+    # Salva o QR Code em um buffer (buffer_qr) para inserção no PDF
+    buffer_qr = io.BytesIO()
+    qr_img.save(buffer_qr, format="PNG")
+    buffer_qr.seek(0)
+    
+    # 3. Criação do PDF
+    pdf = FPDF('P', 'mm', 'A4')
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    
+    # --- Título ---
+    pdf.set_font('Arial', 'B', 16)
+    pdf.set_text_color(24, 45, 81) # Azul Escuro
+    pdf.cell(0, 10, f'DOCUMENTO RASTREÁVEL - ID: {documento_id}', 0, 1, 'C')
+    pdf.ln(5)
+
+    # --- Dados Secundários (Tabela) ---
+    pdf.set_font('Arial', 'B', 12)
+    pdf.set_text_color(0, 0, 0) # Preto
+    
+    w_label = 50 # Largura da coluna de Título
+    w_value = 140 # Largura da coluna de Valor
+
+    for coluna, valor in dados_secundarios.items():
+        if pd.notna(valor): # Verifica se o valor não é nulo
+            pdf.set_fill_color(240, 240, 240) # Cinza claro para o fundo
+            
+            # Cabeçalho (Nome da Coluna)
+            pdf.cell(w_label, 8, f'{coluna}:', 1, 0, 'L', 1) 
+            
+            # Valor da Célula
+            pdf.set_fill_color(255, 255, 255) # Fundo branco
+            pdf.set_font('Arial', '', 12) # Volta para fonte normal
+            
+            # Garante que o valor não é NaN e converte para string
+            display_value = str(valor) if pd.notna(valor) else "N/A"
+            pdf.cell(w_value, 8, display_value, 1, 1, 'L', 1)
+            pdf.set_font('Arial', 'B', 12) # Volta para negrito
+            
+    pdf.ln(15) 
+    
+    # --- Inserção do QR Code ---
+    qr_code_size_mm = 40
+    x_pos = (210 - qr_code_size_mm) / 2 
+    
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(0, 5, "Use a câmera do seu celular para rastrear:", 0, 1, 'C')
+    pdf.ln(2)
+    
+    # Adiciona a imagem QR Code do buffer
+    pdf.image(buffer_qr, x=x_pos, y=pdf.get_y(), w=qr_code_size_mm)
+    pdf.ln(qr_code_size_mm + 5)
+    
+    # --- Aviso de Segurança ---
+    pdf.set_font('Arial', 'I', 9) # Itálico e menor
+    pdf.set_text_color(255, 0, 0) # Vermelho
+    pdf.multi_cell(0, 4, 'AVISO DE SEGURANÇA: Esta cópia contém um código de rastreamento único e não deve ser compartilhada sem autorização. O código permite verificar a validade do documento e rastrear o histórico de uso.', 0, 'C')
+    
+    # 4. Finalização e Buffer de Saída
+    buffer_pdf = io.BytesIO(pdf.output(dest='S').encode('latin-1'))
+    buffer_pdf.seek(0)
+    return buffer_pdf
+
+# --- Rotas da Aplicação Flask ---
+
+@app.route('/', methods=['GET', 'POST'])
+def upload_file():
+    """Rota principal para upload de arquivo e geração de ZIP."""
+    if request.method == 'POST':
+        # Verifica se o arquivo foi incluído no request
+        if 'file' not in request.files:
+            return render_template('index.html', error='Nenhum arquivo enviado.')
+        
+        file = request.files['file']
+        
+        # Se o usuário não selecionar um arquivo, o navegador envia um arquivo vazio
+        if file.filename == '':
+            return render_template('index.html', error='Nenhum arquivo selecionado.')
+        
+        if file and allowed_file(file.filename):
+            try:
+                # 1. Carregar e Processar a Planilha
+                file_extension = file.filename.rsplit('.', 1)[1].lower()
+                
+                # Ler o arquivo de upload para um buffer de memória
+                file_buffer = io.BytesIO(file.read())
+
+                if file_extension == 'csv':
+                    # Tenta ler CSV com diferentes codificações
+                    try:
+                        df = pd.read_csv(file_buffer, encoding='utf-8')
+                    except UnicodeDecodeError:
+                        file_buffer.seek(0) # Volta ao início
+                        df = pd.read_csv(file_buffer, encoding='latin-1')
+                else: # xls ou xlsx
+                    df = pd.read_excel(file_buffer, engine='openpyxl')
+                
+                # 2. Gerar PDFs e o Arquivo ZIP
+                
+                # Cria um buffer de memória para armazenar o ZIP
+                zip_buffer = io.BytesIO()
+                
+                with zipfile.ZipFile(zip_buffer, 'a', zipfile.ZIP_DEFLATED, False) as zf:
+                    for index, row in df.iterrows():
+                        # O nome do arquivo será baseado na primeira coluna (ID único)
+                        documento_id = str(row.iloc[0])
+                        pdf_filename = f'{documento_id}_rastreavel.pdf'
+                        
+                        # Chama a função de geração de PDF
+                        pdf_buffer = gerar_pdf_com_qr(row)
+                        
+                        # Adiciona o PDF ao arquivo ZIP
+                        zf.writestr(pdf_filename, pdf_buffer.getvalue())
+
+                zip_buffer.seek(0)
+                
+                # 3. Retornar o ZIP para o usuário
+                return send_file(
+                    zip_buffer,
+                    mimetype='application/zip',
+                    as_attachment=True,
+                    download_name='documentos_rastreaveis.zip'
+                )
+
+            except Exception as e:
+                # Captura erros de processamento (ex: formato de dados errado, colunas ausentes)
+                error_message = f"Erro no processamento da planilha: Verifique o formato e a codificação (UTF-8 ou Latin-1). Detalhe: {e}"
+                return render_template('index.html', error=error_message)
+
+        else:
+            return render_template('index.html', error='Tipo de arquivo não permitido. Use CSV, XLS ou XLSX.')
+            
+    # Requisição GET (apenas mostra a página inicial)
+    return render_template('index.html')
+
+
+@app.route('/documento/<unique_id>')
+def rastreamento(unique_id):
+    """
+    Rota para simular a página de rastreamento do documento.
+    O ID único (unique_id) é extraído do QR Code.
+    """
+    # Validação simples de segurança: verifica se o ID é uma string alfanumérica
+    if not re.match(r'^[a-zA-Z0-9\-\_]+$', unique_id):
+        # Evita ataques de injeção de caminho, etc.
+        abort(404)
+    
+    # A lógica real aqui faria uma busca em um banco de dados (Firestore)
+    # usando o 'unique_id' para verificar o status, data de emissão, e destinatário.
+    # Por enquanto, mostramos uma simulação estática.
+    
+    # Retorna a página de rastreamento com o ID injetado
+    return render_template('rastreamento.html', unique_id=unique_id)
+
+@app.errorhandler(404)
+def page_not_found(e):
+    """Lida com erros 404 (Página não encontrada)."""
+    return render_template('index.html', error="Página ou Documento não encontrado (Erro 404)."), 404
+
+
+# O bloco abaixo é usado apenas para rodar o app localmente durante o desenvolvimento.
+# No Render, o gunicorn será usado para iniciar o app.
+if __name__ == '__main__':
+    # Define o host como '0.0.0.0' para que o Render possa rodar corretamente
+    # Ao rodar localmente, você pode acessar http://127.0.0.1:5000
+    app.run(host='0.0.0.0', port=os.environ.get('PORT', 5000), debug=True)
