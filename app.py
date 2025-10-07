@@ -2,15 +2,17 @@ import os
 import zipfile
 import io
 import pandas as pd
-from flask import Flask, render_template, request, send_file, url_for
+from flask import Flask, render_template, request, url_for, Response, make_response
 from werkzeug.utils import secure_filename
 from fpdf import FPDF
 from PIL import Image
 import qrcode
+import numpy as np # Importado para ajudar a tratar valores NaN (Not a Number)
 
 # Configurações iniciais
 app = Flask(__name__)
 # A URL base usada para rastreamento (o Render a define)
+# Mantemos a URL fixa, embora o Render a defina
 BASE_URL = 'https://pdf-rastreavel-app.onrender.com' 
 
 # Variável de URL de Rastreamento (A SER USADA NO QR CODE)
@@ -37,9 +39,13 @@ def gerar_pdf_com_qr(pdf, row_data, unique_id, rastreamento_url):
 
     # Dados
     pdf.set_font("Arial", '', 12)
+    # Garante que os valores de row_data não são NaN para evitar erro no f-string
+    nome_cliente = str(row_data.get('NOME_CLIENTE', 'N/A')) if pd.notna(row_data.get('NOME_CLIENTE')) else 'N/A'
+    data_emissao = str(row_data.get('DATA_EMISSAO', 'N/A')) if pd.notna(row_data.get('DATA_EMISSAO')) else 'N/A'
+    
     pdf.cell(0, 8, f"ID Único: {unique_id}", 0, 1)
-    pdf.cell(0, 8, f"Nome do Cliente: {row_data.get('NOME_CLIENTE', 'N/A')}", 0, 1)
-    pdf.cell(0, 8, f"Data de Emissão: {row_data.get('DATA_EMISSAO', 'N/A')}", 0, 1)
+    pdf.cell(0, 8, f"Nome do Cliente: {nome_cliente}", 0, 1)
+    pdf.cell(0, 8, f"Data de Emissão: {data_emissao}", 0, 1)
     pdf.ln(10)
 
     # Informação de Rastreamento
@@ -64,22 +70,41 @@ def gerar_pdf_com_qr(pdf, row_data, unique_id, rastreamento_url):
     
     # Salva a imagem em um buffer de memória (IO)
     img_buffer = io.BytesIO()
-    # Usamos o formato 'PNG' para não perder a qualidade e ser compatível com FPDF
     img_pil.save(img_buffer, format="PNG")
     img_buffer.seek(0)
 
-    # Adiciona a imagem ao PDF (colocada no centro da largura da página)
+    # Adiciona a imagem ao PDF
     page_width = pdf.w - 2 * pdf.l_margin
-    img_size = 50  # Tamanho fixo do QR code
+    img_size = 50 
     x_pos = (pdf.w - img_size) / 2
     
     pdf.image(img_buffer, x=x_pos, y=pdf.get_y(), w=img_size, h=img_size, type='PNG')
-    pdf.ln(img_size + 10) # Avança para depois do QR code
+    pdf.ln(img_size + 10) 
     
     # Campo de Rastreio Simulado (Rodapé)
     pdf.set_y(pdf.h - 20)
     pdf.set_font("Arial", 'B', 8)
     pdf.cell(0, 5, f"CHAVE DE RASTREIO INTERNO: {unique_id}", 0, 0, 'C')
+
+# Função para enviar o ZIP por streaming
+def send_file_streamed(zip_buffer, filename='documentos_rastreaveis.zip'):
+    """Envia o conteúdo do buffer em streaming para evitar timeouts."""
+    zip_buffer.seek(0)
+    
+    # Cria uma função geradora para ler o buffer em pedaços (chunks)
+    def generate():
+        chunk_size = 8192 # 8KB chunks
+        while True:
+            chunk = zip_buffer.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
+
+    # Cria a resposta do Flask usando o gerador
+    response = Response(generate(), mimetype='application/zip')
+    response.headers['Content-Disposition'] = f'attachment; filename={filename}'
+    response.headers['Content-Length'] = str(zip_buffer.getbuffer().nbytes)
+    return response
 
 # Rota principal para carregar o HTML
 @app.route('/')
@@ -97,35 +122,28 @@ def upload_file():
         return 'Nenhum arquivo selecionado', 400
     
     filename = secure_filename(file.filename)
-    # Salva o arquivo em memória para processamento (não precisamos salvar no disco)
     file_stream = io.BytesIO(file.read())
     
-    # Detecta o tipo de arquivo
+    # Detecção e leitura do arquivo (sem alterações nesta lógica)
     if filename.endswith(('.xls', '.xlsx')):
         try:
-            # Para arquivos Excel
             df = pd.read_excel(file_stream)
         except Exception as e:
-            # Retorna o erro no AJAX do frontend
             return f'Erro ao ler arquivo Excel: {e}', 500
     elif filename.endswith('.csv'):
         # Tenta ler CSV com os delimitadores mais comuns e UTF-8
         for encoding in ['utf-8', 'latin-1']:
-            for delimiter in [',', ';']: # Tenta vírgula e ponto-e-vírgula
+            for delimiter in [',', ';']: 
                 try:
                     file_stream.seek(0)
                     df = pd.read_csv(file_stream, encoding=encoding, sep=delimiter)
-                    
-                    # Se a leitura for bem sucedida e tiver pelo menos 2 colunas, consideramos OK
                     if len(df.columns) > 1:
-                        # Limpa espaços em branco nos nomes das colunas
                         df.columns = df.columns.str.strip()
-                        # Sai do loop
                         break 
                     else:
-                        continue # Tenta o próximo delimitador/encoding
+                        continue
                 except Exception:
-                    continue # Tenta o próximo delimitador/encoding
+                    continue
             if 'df' in locals() and len(df.columns) > 1:
                 break
         
@@ -136,9 +154,7 @@ def upload_file():
 
     # Validação de colunas obrigatórias
     colunas_obrigatorias = ['ID_UNICO', 'NOME_CLIENTE', 'DATA_EMISSAO']
-    # Garante que as colunas existem
     if not all(col in df.columns for col in colunas_obrigatorias):
-        # Retorna as colunas encontradas para ajudar na depuração
         colunas_encontradas = ", ".join(df.columns.tolist())
         return f'Arquivo precisa das colunas: {", ".join(colunas_obrigatorias)}. Colunas encontradas: {colunas_encontradas}', 400
 
@@ -147,13 +163,13 @@ def upload_file():
     
     try:
         with zipfile.ZipFile(zip_buffer, 'a', zipfile.ZIP_DEFLATED, False) as zip_file:
-            # Itera sobre cada linha da planilha
             for index, row in df.iterrows():
                 try:
                     # Trata valores nulos ou NaN no ID_UNICO
                     unique_id_raw = row.get('ID_UNICO')
-                    if pd.isna(unique_id_raw):
-                        unique_id = f"ERRO-LINHA-{index + 1}" # Se for nulo, usa um ID de erro
+                    # Usamos np.isnan para verificar NaN de forma segura
+                    if pd.isna(unique_id_raw) or (isinstance(unique_id_raw, float) and np.isnan(unique_id_raw)):
+                        unique_id = f"ERRO-LINHA-{index + 1}"
                     else:
                         unique_id = str(unique_id_raw).strip()
                         if not unique_id:
@@ -168,10 +184,10 @@ def upload_file():
                     
                     gerar_pdf_com_qr(pdf, row.to_dict(), unique_id, rastreamento_url)
                     
-                    # **MUDANÇA CRÍTICA AQUI**: Obtém os bytes diretamente no buffer
+                    # Obtém os bytes diretamente no buffer
                     pdf_output_buffer = io.BytesIO()
                     pdf.output(dest='B', out=pdf_output_buffer)
-                    pdf_output = pdf_output_buffer.getvalue() # Obtém os bytes
+                    pdf_output = pdf_output_buffer.getvalue()
                     
                     # 3. Adiciona o PDF ao ZIP
                     pdf_filename = f"documento_{unique_id}.pdf"
@@ -182,15 +198,8 @@ def upload_file():
                     error_message = f"Erro fatal ao gerar o PDF na linha {index + 1} (ID: {row.get('ID_UNICO', 'N/A')}). Detalhe: {row_e}"
                     return error_message, 500
 
-        zip_buffer.seek(0)
-        
-        # 4. Envia o arquivo ZIP
-        return send_file(
-            zip_buffer,
-            mimetype='application/zip',
-            as_attachment=True,
-            download_name='documentos_rastreaveis.zip'
-        )
+        # Agora, envia o ZIP usando a função de streaming
+        return send_file_streamed(zip_buffer)
 
     except Exception as e:
         # Erro genérico de processamento (fora do loop)
