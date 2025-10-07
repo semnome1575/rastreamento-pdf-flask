@@ -28,7 +28,6 @@ def sanitize_text(text):
     
     # Converte para string, depois força codificação latin-1 (padrão FPDF)
     # usando 'ignore' para remover caracteres não suportados, e decodifica de volta.
-    # O FPDF-1.7.2 só suporta caracteres ISO-8859-1 (latin-1) nativamente.
     return str(text).encode('latin-1', 'ignore').decode('latin-1').strip()
 
 # Função auxiliar para configurar o PDF e a célula do texto
@@ -139,31 +138,36 @@ def upload_file():
     filename = secure_filename(file.filename)
     file_stream = io.BytesIO(file.read())
     
-    # Detecção e leitura do arquivo (sem alterações nesta lógica)
+    # Detecção e leitura do arquivo
+    df = None # Inicializa df
     if filename.endswith(('.xls', '.xlsx')):
         try:
             df = pd.read_excel(file_stream)
         except Exception as e:
             return f'Erro ao ler arquivo Excel: {e}', 500
+            
     elif filename.endswith('.csv'):
-        # Tenta ler CSV com os delimitadores mais comuns e UTF-8
-        for encoding in ['utf-8', 'latin-1']:
-            for delimiter in [',', ';']: 
-                try:
-                    file_stream.seek(0)
-                    df = pd.read_csv(file_stream, encoding=encoding, sep=delimiter)
-                    if len(df.columns) > 1:
-                        df.columns = df.columns.str.strip()
-                        break 
-                    else:
-                        continue
-                except Exception:
-                    continue
-            if 'df' in locals() and len(df.columns) > 1:
-                break
-        
-        if 'df' not in locals() or len(df.columns) <= 1:
-            return 'Erro ao ler arquivo CSV. Verifique o delimitador (vírgula ou ponto-e-vírgula) e a codificação.', 500
+        # Tentativa 1: Delimitador Vírgula (padrão US/Internacional) com Latin-1
+        try:
+            file_stream.seek(0)
+            df = pd.read_csv(file_stream, encoding='latin-1', sep=',')
+            df.columns = df.columns.str.strip()
+            print(f"DEBUG: CSV lido com SUCESSO (Vírgula, Latin-1) - {len(df)} linhas.")
+            
+        except Exception as e:
+            # Tentativa 2: Falhou na vírgula, tenta Ponto-e-vírgula (padrão BR) com Latin-1
+            try:
+                file_stream.seek(0)
+                df = pd.read_csv(file_stream, encoding='latin-1', sep=';')
+                df.columns = df.columns.str.strip()
+                print(f"DEBUG: CSV lido com SUCESSO (Ponto-e-vírgula, Latin-1) - {len(df)} linhas.")
+            except Exception as e2:
+                # Falha total: retorna erro detalhado
+                return f'Erro fatal ao ler o arquivo CSV. Tente salvar o arquivo como "CSV (Delimitado por vírgulas)" e verifique a codificação. Detalhe da falha: {e2}', 500
+            
+        if df is None or len(df.columns) <= 1:
+            return 'Erro ao ler arquivo CSV. O delimitador não foi reconhecido corretamente. Verifique se o arquivo está formatado como CSV.', 500
+            
     else:
         return 'Formato de arquivo não suportado. Use CSV ou Excel.', 400
 
