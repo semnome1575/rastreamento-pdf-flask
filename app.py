@@ -150,7 +150,14 @@ def upload_file():
             # Itera sobre cada linha da planilha
             for index, row in df.iterrows():
                 try:
-                    unique_id = str(row['ID_UNICO'])
+                    # **AJUSTE AQUI**: Trata valores nulos ou NaN no ID_UNICO
+                    unique_id_raw = row.get('ID_UNICO')
+                    if pd.isna(unique_id_raw):
+                        unique_id = f"ERRO-LINHA-{index + 1}" # Se for nulo, usa um ID de erro
+                    else:
+                        unique_id = str(unique_id_raw).strip()
+                        if not unique_id:
+                            unique_id = f"ERRO-LINHA-{index + 1}"
                     
                     # 1. Cria a URL de rastreamento para o QR Code
                     rastreamento_url = f"{BASE_URL_RASTREAMENTO}{url_for('rastreamento', unique_id=unique_id)}"
@@ -168,9 +175,8 @@ def upload_file():
                     zip_file.writestr(pdf_filename, pdf_output)
                 
                 except Exception as row_e:
-                    # **NOVO**: Captura o erro específico da linha e retorna imediatamente
+                    # Captura o erro específico da linha e retorna imediatamente
                     error_message = f"Erro fatal ao gerar o PDF na linha {index + 1} (ID: {row.get('ID_UNICO', 'N/A')}). Detalhe: {row_e}"
-                    # Garantimos que o Flask retorne um 500 antes do timeout
                     return error_message, 500
 
         zip_buffer.seek(0)
