@@ -136,33 +136,51 @@ def upload_file():
         return 'Nenhum arquivo selecionado', 400
     
     filename = secure_filename(file.filename)
-    file_stream = io.BytesIO(file.read())
+    
+    # Lê o arquivo COMPLETO em memória
+    file_bytes = file.read()
     
     # Detecção e leitura do arquivo
     df = None # Inicializa df
     if filename.endswith(('.xls', '.xlsx')):
         try:
+            file_stream = io.BytesIO(file_bytes)
             df = pd.read_excel(file_stream)
         except Exception as e:
             return f'Erro ao ler arquivo Excel: {e}', 500
             
     elif filename.endswith('.csv'):
-        # Tentativa 1: Delimitador Vírgula (padrão US/Internacional) com Latin-1
+        # NOVO PASSO CRÍTICO: Pré-processamento das quebras de linha
         try:
-            file_stream.seek(0)
-            df = pd.read_csv(file_stream, encoding='latin-1', sep=',')
-            df.columns = df.columns.str.strip()
-            # LOG DE DEBUG ATUALIZADO PARA INCLUIR COLUNAS
-            print(f"DEBUG: CSV lido com SUCESSO (Vírgula, Latin-1) - {len(df)} linhas. Colunas encontradas: {df.columns.tolist()}")
+            # 1. Decodifica os bytes (latin-1 para suportar acentos)
+            content_str = file_bytes.decode('latin-1')
+            
+            # 2. Substitui todas as variações de quebra de linha por '\n' (padrão universal)
+            content_str = content_str.replace('\r\n', '\n').replace('\r', '\n')
+            
+            # 3. Cria um novo stream de texto para o Pandas
+            file_stream_processed = io.StringIO(content_str)
             
         except Exception as e:
-            # Tentativa 2: Falhou na vírgula, tenta Ponto-e-vírgula (padrão BR) com Latin-1
+            return f'Erro na decodificação do arquivo CSV (Latin-1). Detalhe: {e}', 500
+
+
+        # Tentativa 1: Delimitador Vírgula (padrão US/Internacional)
+        try:
+            file_stream_processed.seek(0)
+            df = pd.read_csv(file_stream_processed, sep=',')
+            df.columns = df.columns.str.strip()
+            
+            print(f"DEBUG: CSV lido com SUCESSO (Vírgula) - {len(df)} linhas. Colunas encontradas: {df.columns.tolist()}")
+            
+        except Exception as e:
+            # Tentativa 2: Falhou na vírgula, tenta Ponto-e-vírgula (padrão BR)
             try:
-                file_stream.seek(0)
-                df = pd.read_csv(file_stream, encoding='latin-1', sep=';')
+                file_stream_processed.seek(0)
+                df = pd.read_csv(file_stream_processed, sep=';')
                 df.columns = df.columns.str.strip()
-                # LOG DE DEBUG ATUALIZADO PARA INCLUIR COLUNAS
-                print(f"DEBUG: CSV lido com SUCESSO (Ponto-e-vírgula, Latin-1) - {len(df)} linhas. Colunas encontradas: {df.columns.tolist()}")
+                
+                print(f"DEBUG: CSV lido com SUCESSO (Ponto-e-vírgula) - {len(df)} linhas. Colunas encontradas: {df.columns.tolist()}")
             except Exception as e2:
                 # Falha total: retorna erro detalhado
                 return f'Erro fatal ao ler o arquivo CSV. Tente salvar o arquivo como "CSV (Delimitado por vírgulas)" e verifique a codificação. Detalhe da falha: {e2}', 500
