@@ -1,1 +1,7 @@
-FlaskgunicornpandasopenpyxlqrcodefpdfPillow
+Flask
+gunicorn
+pandas
+openpyxl
+qrcode
+fpdf
+Pillow
