@@ -5,13 +5,13 @@ import traceback
 import pandas as pd
 import qrcode
 from PIL import Image
-from fpdf2 import FPDF # <--- CORRIGIDO: Usando a biblioteca fpdf2
+from fpdf2 import FPDF # <--- Importação correta forçada
 from flask import Flask, render_template, request, send_file, url_for, abort
 
 # Configurações do Flask
 app = Flask(__name__)
-# Certifique-se de que o URL de rastreamento seja configurável
-BASE_URL_RASTREAMENTO = "https://pdf-rastreavel-app.onrender.com/rastrear/" 
+# URL DE RASTREAMENTO: ATUALIZE SE O SEU DOMÍNIO MUDAR NO RENDER
+BASE_URL_RASTREAMENTO = "https://pdf-rastreavel-app-1.onrender.com/rastrear/" 
 
 # --- Função de Geração de PDF com QR Code ---
 
@@ -22,7 +22,6 @@ def gerar_pdf_com_qr(pdf, row_data, unique_id, rastreamento_url):
     """
     try:
         # 1. Criação do QR Code
-        # Cria a URL com o ID único
         full_url = f"{rastreamento_url}{unique_id}"
 
         qr = qrcode.QRCode(
@@ -53,8 +52,9 @@ def gerar_pdf_com_qr(pdf, row_data, unique_id, rastreamento_url):
         w_label = 75 
         w_value = 100
         
+        # Acesso aos dados do dicionário (da linha do pandas)
         for key, value in row_data.items():
-            # Exibe todos os dados, exceto a chave única que já está no título
+            # Exibe todos os dados, exceto a chave única
             if key.upper() != 'ID_UNICO':
                 pdf.set_fill_color(240, 240, 240)
                 pdf.cell(w_label, 8, f'{key.replace("_", " ").title()}:', 1, 0, 'L', True) 
@@ -68,7 +68,7 @@ def gerar_pdf_com_qr(pdf, row_data, unique_id, rastreamento_url):
                 
         pdf.ln(15) 
         
-        # 4. Inserção do QR Code (A correção do FPDF2 é aqui)
+        # 4. Inserção do QR Code
         qr_code_size_mm = 40
         x_pos = (pdf.w - qr_code_size_mm) / 2 # Centraliza o QR Code
         
@@ -76,7 +76,6 @@ def gerar_pdf_com_qr(pdf, row_data, unique_id, rastreamento_url):
         pdf.cell(0, 5, "Use a câmera do seu celular para rastrear:", 0, 1, 'C')
         pdf.ln(2)
         
-        # CORREÇÃO CRÍTICA: FPDF2 aceita o objeto BytesIO diretamente
         pdf.image(img_buffer, x=x_pos, y=pdf.get_y(), w=qr_code_size_mm, h=qr_code_size_mm, type='PNG')
         pdf.ln(qr_code_size_mm + 5) 
 
@@ -100,7 +99,6 @@ def index():
 @app.route('/rastrear/<unique_id>')
 def rastrear_documento(unique_id):
     """Rota para simular o rastreamento (o QR Code aponta para aqui)."""
-    # Esta é uma simulação simples
     return render_template('rastreamento.html', unique_id=unique_id)
 
 @app.route('/upload', methods=['POST'])
@@ -114,82 +112,61 @@ def upload_file():
     if file.filename == '':
         return "Nenhum arquivo selecionado.", 400
     
+    # Adicionando .xls para maior compatibilidade
     if not (file.filename.endswith('.csv') or file.filename.endswith('.xlsx') or file.filename.endswith('.xls')):
         return "Formato de arquivo inválido. Use .csv ou .xlsx.", 400
 
     try:
-        # Lê o arquivo em memória para determinar o formato
         file_bytes = file.read()
         file_buffer = io.BytesIO(file_bytes)
 
         if file.filename.endswith('.csv'):
-            # Para CSV, tenta ler com a vírgula como separador por padrão
             try:
-                # O parâmetro sep=',' é crucial para quebrar as linhas (como o problema anterior)
+                # Tenta ler CSV com vírgula (sep=',')
                 df = pd.read_csv(file_buffer, encoding='utf-8', sep=',')
-                app.logger.debug("CSV lido com SUCESSO (Vírgula)")
-            except Exception as e:
-                # Tenta ponto e vírgula como fallback
+            except Exception:
+                # Tenta ler CSV com ponto e vírgula (sep=';') como fallback
                 file_buffer.seek(0)
                 df = pd.read_csv(file_buffer, encoding='utf-8', sep=';')
-                app.logger.debug("CSV lido com SUCESSO (Ponto e Vírgula)")
         
         elif file.filename.endswith(('.xlsx', '.xls')):
-            # Para XLSX/XLS, use o read_excel
             df = pd.read_excel(file_buffer)
-            app.logger.debug("XLSX lido com SUCESSO")
 
-        # Garante que a coluna ID_UNICO existe e não está vazia
         if 'ID_UNICO' not in df.columns:
             return "A planilha deve conter uma coluna chamada 'ID_UNICO'.", 400
 
-        # Remove linhas com ID_UNICO vazio
         df = df.dropna(subset=['ID_UNICO'])
 
-        app.logger.debug(f"Colunas encontradas: {df.columns.tolist()}")
-        app.logger.debug(f"Total de linhas a processar: {len(df)}")
-        
         if len(df) == 0:
             return "Nenhuma linha válida encontrada para processamento após limpeza.", 400
 
-        # Prepara o buffer para o arquivo ZIP
         zip_buffer = io.BytesIO()
         
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            # Itera sobre cada linha do DataFrame
             for index, row in df.iterrows():
                 unique_id = str(row['ID_UNICO']).strip()
-                
-                # Cria um novo objeto PDF (um para cada documento)
                 pdf = FPDF('P', 'mm', 'A4')
                 
                 try:
-                    # Gera o PDF usando a função corrigida
                     gerar_pdf_com_qr(pdf, row.to_dict(), unique_id, BASE_URL_RASTREAMENTO)
                     
-                    # Salva o PDF no buffer temporário (BytesIO)
                     pdf_buffer = io.BytesIO()
                     pdf.output(pdf_buffer)
                     pdf_buffer.seek(0)
                     
-                    # Adiciona o PDF ao arquivo ZIP
                     pdf_filename = f'{unique_id}.pdf'
                     zip_file.writestr(pdf_filename, pdf_buffer.read())
 
                 except Exception as e:
-                    # Captura erros de geração do PDF, registra e continua (para não parar o processo)
-                    error_msg = f"ERRO FATAL GERAÇÃO PDF NA LINHA {index + 1}: {traceback.format_exc()}"
+                    error_msg = f"ERRO FATAL GERAÇÃO PDF NA LINHA {index + 1} (ID: {unique_id}): {traceback.format_exc()}"
                     app.logger.error(error_msg)
-                    # Se houver erro, retornamos o erro para o frontend
                     return f"Erro ao gerar PDF para a linha {index + 1} (ID: {unique_id}): {str(e)}", 500
 
         zip_buffer.seek(0)
 
-        # Retorna o arquivo ZIP para o cliente
         return send_file(zip_buffer, mimetype='application/zip', as_attachment=True, download_name='documentos_rastreaveis.zip')
 
     except Exception as e:
-        # Captura erros gerais de leitura ou processamento
         app.logger.error(f"Erro inesperado no processamento: {traceback.format_exc()}")
         return f"Erro inesperado no servidor: {str(e)}", 500
 
