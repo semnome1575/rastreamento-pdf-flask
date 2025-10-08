@@ -86,10 +86,8 @@ def gerar_pdf_com_qr(pdf, row_data, unique_id, rastreamento_url):
     x_pos = (pdf.w - img_size) / 2
     
     # CORREÇÃO CRÍTICA DO ERRO 'AttributeError: _io.BytesIO object has no attribute startswith'
-    # Passamos o buffer diretamente no argumento 'name' (que FPDF aceita),
-    # mas garantimos que a função FPDF.image não confunda o buffer com um nome de arquivo
-    # string, fornecendo o argumento type='PNG'
-    pdf.image(name=img_buffer, x=x_pos, y=pdf.get_y(), w=img_size, h=img_size, type='PNG')
+    # ALTERADO: Passamos o img_buffer como o primeiro argumento posicional.
+    pdf.image(img_buffer, x=x_pos, y=pdf.get_y(), w=img_size, h=img_size, type='PNG')
     
     pdf.ln(img_size + 10) 
     
