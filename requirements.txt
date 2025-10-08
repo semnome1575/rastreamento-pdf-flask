@@ -1,7 +1,0 @@
-Flask
-gunicorn
-pandas
-openpyxl
-qrcode
-fpdf2==2.8.1
-Pillow
