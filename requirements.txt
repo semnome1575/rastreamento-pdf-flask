@@ -3,5 +3,5 @@ gunicorn
 pandas
 openpyxl
 qrcode
-fpdf
+fpdf2==2.8.1
 Pillow
