@@ -4,7 +4,7 @@ import io
 import pandas as pd
 from flask import Flask, render_template, request, url_for, Response, make_response
 from werkzeug.utils import secure_filename
-from fpdf import FPDF
+from fpdf2 import FPDF # <--- CORRIGIDO: Usando a biblioteca fpdf2
 from PIL import Image
 import qrcode
 import numpy as np # Importado para ajudar a tratar valores NaN (Not a Number)
@@ -85,8 +85,7 @@ def gerar_pdf_com_qr(pdf, row_data, unique_id, rastreamento_url):
     img_size = 50 
     x_pos = (pdf.w - img_size) / 2
     
-    # CORREÇÃO CRÍTICA DO ERRO 'AttributeError: _io.BytesIO object has no attribute startswith'
-    # ALTERADO: Passamos o img_buffer como o primeiro argumento posicional.
+    # Com fpdf2, esta sintaxe é a correta para passar um buffer de imagem
     pdf.image(img_buffer, x=x_pos, y=pdf.get_y(), w=img_size, h=img_size, type='PNG')
     
     pdf.ln(img_size + 10) 
