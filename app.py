@@ -1,19 +1,35 @@
-import os
+import os 
 import io
+import re # Importação necessária para validação de segurança
 import zipfile
-import traceback
 import pandas as pd
 import qrcode
+from fpdf2 import FPDF # <-- CORREÇÃO: Usando a biblioteca moderna fpdf2
 from PIL import Image
-from fpdf2 import FPDF # <--- Importação correta forçada
-from flask import Flask, render_template, request, send_file, url_for, abort
+from flask import Flask, render_template, request, send_file, redirect, url_for, abort
 
-# Configurações do Flask
-app = Flask(__name__)
-# URL DE RASTREAMENTO: ATUALIZE SE O SEU DOMÍNIO MUDAR NO RENDER
-BASE_URL_RASTREAMENTO = "https://pdf-rastreavel-app-1.onrender.com/rastrear/" 
+# Configurações de Segurança
+ALLOWED_EXTENSIONS = {'csv', 'xls', 'xlsx'} 
+MAX_CONTENT_LENGTH = 16 * 1024 * 1024 
 
-# --- Função de Geração de PDF com QR Code ---
+# --- CONFIGURAÇÃO DA URL DE RASTREAMENTO (ROBUSTO) ---
+# O Render lerá a variável de ambiente 'BASE_URL_RASTREAMENTO' que configuramos lá.
+# Se a variável não existir (como ao rodar localmente), ele usará a URL de exemplo.
+BASE_URL_RASTREAMENTO = os.environ.get('BASE_URL_RASTREAMENTO', 'http://rastreio.exemplo.com.br/documento/') 
+
+
+app = Flask(__name__, template_folder='templates')
+app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
+
+
+# --- Funções de Segurança ---
+
+def allowed_file(filename):
+    """Verifica se a extensão do arquivo é permitida."""
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+# --- Funções de Geração de PDF ---
 
 def gerar_pdf_com_qr(pdf, row_data, unique_id, rastreamento_url):
     """
@@ -22,7 +38,12 @@ def gerar_pdf_com_qr(pdf, row_data, unique_id, rastreamento_url):
     """
     try:
         # 1. Criação do QR Code
-        full_url = f"{rastreamento_url}{unique_id}"
+        # Remove barras no final da URL se houver para evitar URLs duplicadas
+        base_url_limpa = rastreamento_url.rstrip('/')
+        
+        # A URL final será sempre: DOMINIO/documento/ID_UNICO
+        # O base_url_limpa já deve conter '/documento' se estiver usando o fallback.
+        full_url = f"{base_url_limpa}/{unique_id}"
 
         qr = qrcode.QRCode(
             version=1,
@@ -70,7 +91,7 @@ def gerar_pdf_com_qr(pdf, row_data, unique_id, rastreamento_url):
         
         # 4. Inserção do QR Code
         qr_code_size_mm = 40
-        x_pos = (pdf.w - qr_code_size_mm) / 2 # Centraliza o QR Code
+        x_pos = (pdf.w - qr_code_size_mm) / 2 
         
         pdf.set_font('Arial', '', 10)
         pdf.cell(0, 5, "Use a câmera do seu celular para rastrear:", 0, 1, 'C')
@@ -83,7 +104,7 @@ def gerar_pdf_com_qr(pdf, row_data, unique_id, rastreamento_url):
         pdf.set_font('Arial', 'I', 8)
         pdf.set_text_color(100, 100, 100)
         pdf.cell(0, 5, f'URL Única: {full_url}', 0, 1, 'C')
-        pdf.set_text_color(0, 0, 0) # Volta ao preto
+        pdf.set_text_color(0, 0, 0) 
 
     except Exception as e:
         app.logger.error(f"Erro ao gerar PDF para ID {unique_id}: {e}")
@@ -95,11 +116,6 @@ def gerar_pdf_com_qr(pdf, row_data, unique_id, rastreamento_url):
 def index():
     """Renderiza a página inicial com o formulário de upload."""
     return render_template('index.html')
-
-@app.route('/rastrear/<unique_id>')
-def rastrear_documento(unique_id):
-    """Rota para simular o rastreamento (o QR Code aponta para aqui)."""
-    return render_template('rastreamento.html', unique_id=unique_id)
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -114,7 +130,7 @@ def upload_file():
     
     # Adicionando .xls para maior compatibilidade
     if not (file.filename.endswith('.csv') or file.filename.endswith('.xlsx') or file.filename.endswith('.xls')):
-        return "Formato de arquivo inválido. Use .csv ou .xlsx.", 400
+         return "Formato de arquivo inválido. Use .csv, .xlsx ou .xls.", 400
 
     try:
         file_bytes = file.read()
@@ -148,6 +164,7 @@ def upload_file():
                 pdf = FPDF('P', 'mm', 'A4')
                 
                 try:
+                    # Passamos BASE_URL_RASTREAMENTO (a variável de ambiente) para a função
                     gerar_pdf_com_qr(pdf, row.to_dict(), unique_id, BASE_URL_RASTREAMENTO)
                     
                     pdf_buffer = io.BytesIO()
@@ -158,6 +175,7 @@ def upload_file():
                     zip_file.writestr(pdf_filename, pdf_buffer.read())
 
                 except Exception as e:
+                    import traceback
                     error_msg = f"ERRO FATAL GERAÇÃO PDF NA LINHA {index + 1} (ID: {unique_id}): {traceback.format_exc()}"
                     app.logger.error(error_msg)
                     return f"Erro ao gerar PDF para a linha {index + 1} (ID: {unique_id}): {str(e)}", 500
@@ -167,8 +185,29 @@ def upload_file():
         return send_file(zip_buffer, mimetype='application/zip', as_attachment=True, download_name='documentos_rastreaveis.zip')
 
     except Exception as e:
+        import traceback
         app.logger.error(f"Erro inesperado no processamento: {traceback.format_exc()}")
         return f"Erro inesperado no servidor: {str(e)}", 500
+
+
+@app.route('/documento/<unique_id>')
+def rastreamento(unique_id):
+    """
+    Rota para simular a página de rastreamento do documento.
+    O ID único (unique_id) é extraído do QR Code.
+    """
+    # Validação simples de segurança
+    if not re.match(r'^[a-zA-Z0-9\-\_]+$', unique_id):
+        abort(404)
+    
+    # Retorna a página de rastreamento com o ID injetado
+    return render_template('rastreamento.html', unique_id=unique_id)
+
+@app.errorhandler(404)
+def page_not_found(e):
+    """Lida com erros 404 (Página não encontrada)."""
+    return render_template('index.html', error="Página ou Documento não encontrado (Erro 404)."), 404
+
 
 if __name__ == '__main__':
     app.run(debug=True)
